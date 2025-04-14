@@ -12,9 +12,6 @@
   <a href='https://huggingface.co/loooooong/Any2anyTryon' style="margin: 0 2px;">
     <img src='https://img.shields.io/badge/Hugging Face-ckpts-orange?style=flat&logo=HuggingFace&logoColor=orange' alt='huggingface'>
   </a>
-  <a href='https://huggingface.co/datasets/loooooong/LAION-Garment' style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Hugging Face-datasets-orange?style=flat&logo=HuggingFace&logoColor=orange' alt='huggingface'>
-  </a>
 </div>
 
 ![teaser](asset/images/teaser.png)
@@ -60,17 +57,6 @@ CUDA_VISIBLE_DEVICES=0 python test_vitonhd.py --model_path black-forest-labs/FLU
 --output_dir ./results/vitonhd_test_paired_repaint --meta_file data/zalando-hd-resized/test_pairs.txt \
 --mask_dir data/zalando-hd-resized/test/mask --source_dir data/zalando-hd-resized/test/image \
 --train_double_block_only --repaint --paired
-```
-
-## Datasets
-Some data can be downloaded from [here](https://huggingface.co/datasets/loooooong/LAION-Garment). Use the following code to ensure pixel correspondence between the original image and the synthesized image:
-```python
-from src.utils import crop_to_multiple_of_16
-img_src = Image.open(<img_path>)
-img_inpaint = Image.open(io.BytesIO(<inpaint_bytes>))
-
-img_src = crop_to_multiple_of_16(img_src)
-assert img_src.size==img_inpaint.size
 ```
 
 ## To-Do List

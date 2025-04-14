@@ -6,6 +6,9 @@ import gradio as gr
 import os
 import json
 import argparse
+import tempfile
+import uuid
+import subprocess
 
 from diffusers import FluxTransformer2DModel, AutoencoderKL
 from diffusers.hooks import apply_group_offloading
@@ -267,6 +270,65 @@ garment2 = Image.open("asset/images/garment/garment2.jpg")
 garment3 = Image.open("asset/images/garment/garment3.jpg") 
 garment4 = Image.open("asset/images/garment/garment4.jpg")
 
+def enhance_with_realesrgan(image, outscale=3.5, face_enhance=True):
+    """
+    Enhance an image using Real-ESRGAN
+    
+    Args:
+        image (PIL.Image): The image to enhance
+        outscale (float): Output scale factor
+        face_enhance (bool): Whether to enhance faces (always True now)
+    
+    Returns:
+        PIL.Image: The enhanced image
+    """
+    # Create temporary files for input and output
+    temp_dir = tempfile.gettempdir()
+    random_id = str(uuid.uuid4())
+    input_path = os.path.join(temp_dir, f"input_{random_id}.png")
+    output_path = os.path.join(temp_dir, f"output_{random_id}.png")
+    
+    # Save input image
+    image.save(input_path)
+    
+    # Prepare command - always use face enhancement
+    cmd = [
+        "python", "inference_realesrgan.py",
+        "-n", "RealESRGAN_x4plus",
+        "-i", input_path,
+        "-o", temp_dir,
+        "--outscale", str(outscale),
+        "--suffix", random_id,
+        "--face_enhance"  # Always enable face enhancement
+    ]
+    
+    # Run Real-ESRGAN
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        
+        # Load enhanced image
+        enhanced_path = os.path.join(temp_dir, f"output_{random_id}.png")
+        if os.path.exists(enhanced_path):
+            enhanced_image = Image.open(enhanced_path)
+            
+            # Clean up
+            try:
+                os.remove(input_path)
+                os.remove(enhanced_path)
+            except:
+                pass
+            
+            return enhanced_image
+        else:
+            print(f"Enhanced image not found at {enhanced_path}")
+            return image
+    except subprocess.CalledProcessError as e:
+        print(f"Error running Real-ESRGAN: {e.stderr.decode()}")
+        return image
+    except Exception as e:
+        print(f"Error enhancing image: {str(e)}")
+        return image
+
 def launch_demo():
     with gr.Blocks() as demo:   
         gr.Markdown("# Any2AnyTryon")
@@ -277,14 +339,6 @@ def launch_demo():
                 with gr.Row():
                     garment_image = gr.Image(label="Garment Image", type="numpy", interactive=True,)
                     with gr.Column():
-                        # Remove prompt textbox from UI - use default prompt
-                        # prompt = gr.Textbox(
-                        #     label="Prompt",
-                        #     info="Try example prompts from right side",
-                        #     placeholder="Enter your prompt here...",
-                        #     value="",
-                        #     # visible=False,
-                        # )
                         with gr.Row():
                             height = gr.Number(label="Height", value=768, precision=0)
                             width = gr.Number(label="Width", value=576, precision=0)
@@ -294,6 +348,10 @@ def launch_demo():
                             num_inference_steps = gr.Number(label="Inference Steps", value=15)
                             show_type = gr.Radio(label="Show Type",choices=["follow model image", "follow height & width", "all outputs"],value="follow model image")
                             auto_ar = gr.Checkbox(label="Detect Image Size(From Uploaded Images)", value=False, visible=True,)
+                            
+                            # Real-ESRGAN Enhancement Settings - removed face_enhance checkbox
+                            enable_enhancement = gr.Checkbox(label="Enable Real-ESRGAN Enhancement", value=True)
+                            esrgan_scale = gr.Slider(minimum=1.0, maximum=4.0, value=2.0, step=0.1, label="Enhancement Scale")
                 btn = gr.Button("Generate")
             
             with gr.Column():
@@ -322,13 +380,29 @@ def launch_demo():
                             inputs=[model_image, garment_image, height, width, auto_ar], 
                             outputs=[height, width])
         
-        # Use a wrapper function that adds the fixed prompt
-        def generate_with_fixed_prompt(model_image, garment_image, height, width, seed, guidance_scale, show_type, num_inference_steps):
+        # Use a wrapper function that adds the fixed prompt - always use face enhancement
+        def generate_with_fixed_prompt(model_image, garment_image, height, width, seed, guidance_scale, show_type, num_inference_steps, enable_enhancement, esrgan_scale):
             fixed_prompt = "<MODEL> a person with fashion garment. <GARMENT> a garment. <TARGET> model with fashion garment"
-            return generate_image(fixed_prompt, model_image, garment_image, height, width, seed, guidance_scale, show_type, num_inference_steps)
+            
+            # Generate the image using the Any2AnyTryon model
+            generated_image = generate_image(fixed_prompt, model_image, garment_image, height, width, seed, guidance_scale, show_type, num_inference_steps)
+            
+            # Enhance the generated image using Real-ESRGAN if enabled - always use face enhancement
+            if enable_enhancement:
+                try:
+                    print(f"Enhancing image with Real-ESRGAN (scale: {esrgan_scale}, face_enhance: True)...")
+                    enhanced_image = enhance_with_realesrgan(generated_image, outscale=esrgan_scale, face_enhance=True)
+                    print("Enhancement complete!")
+                    return enhanced_image
+                except Exception as e:
+                    print(f"Error during enhancement: {str(e)}")
+                    # If enhancement fails, return the original generated image
+                    return generated_image
+            else:
+                return generated_image
             
         btn.click(fn=generate_with_fixed_prompt,
-                inputs=[model_image, garment_image, height, width, seed, guidance_scale, show_type, num_inference_steps],
+                inputs=[model_image, garment_image, height, width, seed, guidance_scale, show_type, num_inference_steps, enable_enhancement, esrgan_scale],
                 outputs=output)
 
         demo.title = "FLUX Image Generation Demo"
@@ -339,28 +413,52 @@ def launch_demo():
             [
                 model1,
                 garment1,
-                768, 576
+                768, 576,
+                0,  # seed
+                3.5,  # guidance_scale
+                "follow model image",  # show_type
+                15,  # num_inference_steps
+                True,  # enable_enhancement
+                2.0,  # esrgan_scale
             ],
             [
                 model2,
                 garment2,
-                768, 576
+                768, 576,
+                0,  # seed
+                3.5,  # guidance_scale
+                "follow model image",  # show_type
+                15,  # num_inference_steps
+                True,  # enable_enhancement
+                2.0,  # esrgan_scale
             ],
             [
                 model3,
                 garment3,
-                768, 576
+                768, 576,
+                0,  # seed
+                3.5,  # guidance_scale
+                "follow model image",  # show_type
+                15,  # num_inference_steps
+                True,  # enable_enhancement
+                2.0,  # esrgan_scale
             ],
             [
                 model4,
                 garment4,
-                768, 576
+                768, 576,
+                0,  # seed
+                3.5,  # guidance_scale
+                "follow model image",  # show_type
+                15,  # num_inference_steps
+                True,  # enable_enhancement
+                2.0,  # esrgan_scale
             ],
         ]
         
         gr.Examples(
             examples=examples,
-            inputs=[model_image, garment_image],
+            inputs=[model_image, garment_image, height, width, seed, guidance_scale, show_type, num_inference_steps, enable_enhancement, esrgan_scale],
             outputs=output,
             fn=generate_with_fixed_prompt,
             cache_examples=False,
@@ -373,5 +471,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--group_offloading', action="store_true")
     args=parser.parse_args()
+    
+    # Check for Real-ESRGAN dependencies
+    if not os.path.exists("inference_realesrgan.py"):
+        print("Warning: inference_realesrgan.py not found. Real-ESRGAN enhancement will not work.")
+        print("Run setup_realesrgan.sh to set up Real-ESRGAN.")
+    
+    if not os.path.exists("weights/RealESRGAN_x4plus.pth"):
+        print("Warning: RealESRGAN model weights not found. Enhancement will not work.")
+        print("Run setup_realesrgan.sh to download the model weights.")
+    
     pipe = load_models(group_offloading=args.group_offloading)
     launch_demo()
